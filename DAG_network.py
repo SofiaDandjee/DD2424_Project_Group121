@@ -9,8 +9,7 @@ Original file is located at
 
 ! git clone https://github.com/SofiaDandjee/data
 
-# Useful libraries
-
+# Libraries
 import cv2
 import numpy as np
 import torch
@@ -41,28 +40,28 @@ print(pathdir)
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
-# Check if cuda available
+# Check if CPU available
 print(torch.cuda.is_available())
 
-#define transfrom to the data
+#define transform to the data for data augmentation
 dataset_transform = transforms.Compose(
        [transforms.Resize((100,100)),
         transforms.ColorJitter(hue=0.05, saturation=0.05),
         transforms.RandomHorizontalFlip(),
         transforms.RandomVerticalFlip(),
         transforms.ToTensor(),
-        transforms.Normalize(mean=[0.5295, 0.4239, 0.4530], #calculated mean/sd of images
+        transforms.Normalize(mean=[0.5295, 0.4239, 0.4530],
                              std=[0.3257, 0.2623, 0.2767])  
     ])
 
-#import data 
+#import data from the GitHub repo
 dataset = datasets.ImageFolder(root='data/cell_images/',transform=dataset_transform)
 
 #define training, validation, test set sizes
 n = len(dataset)
-n_val = int(n*0.15)  #nb of val elms
-n_test = int(n*0.15) #nb of test elms
-n_train = n-n_val-n_test
+n_val = int(n*0.15)  #nb of val elements
+n_test = int(n*0.15) #nb of test elements
+n_train = n-n_val-n_test #nb of training elements
 
 train_set, val_set, test_set = data.random_split(dataset, (n_train, n_val, n_test))
 
@@ -81,22 +80,26 @@ def imshow(path, dir_, title, n):
     plt.title(title)
   plt.show()
 
+#show examples of parasitized and uninfected images
 imshow(infpath, infdir, 'Parasitized', 5)
 imshow(uninfpath, uninfdir, 'Uninfected', 5)
 
 torch.backends.cudnn.benchmark = True
 torch.backends.cudnn.deterministic = True
 
-class Net3(nn.Module):
+class Net(nn.Module):
     def __init__(self):
-        super(Net3, self).__init__()
+        super(Net, self).__init__()
         
+        #1st conv layer
         self.conv1 = nn.Conv2d(3,32,3)
         self.bn1 = nn.BatchNorm2d(32)
         
+        #2nd conv layer
         self.conv2 = nn.Conv2d(32, 32, 3)
         self.bn2 = nn.BatchNorm2d(32)
         
+        #3rd conv layer
         self.conv3 = nn.Conv2d(32, 32, 3)
         self.bn3 = nn.BatchNorm2d(32)
         
@@ -104,10 +107,12 @@ class Net3(nn.Module):
         self.apool = nn.AvgPool2d(2, 2)
         self.dropout = nn.Dropout()
         
+        #Fully connected layers
         self.lin1 = nn.Linear(49*49*32, 2)
         self.lin2 = nn.Linear(23*23*32, 2)
         self.lin3 = nn.Linear(10*10*32, 2)
-
+        
+	#define forward pass
     def forward(self, x):
         x = F.relu(self.conv1(x))
         #size: 98*98*32
@@ -145,22 +150,29 @@ class Net3(nn.Module):
         
         return y1 + y2 + y3
 
-net3_2=Net3()
-#send net to GPU
-net3_2.to(device)
+#create a network
+net=Net()
 
+#send net to GPU
+net.to(device)
+
+#cross entropy loss
 criterion = nn.CrossEntropyLoss()
-#optimizer = optim.Adam(net3_2.parameters(),lr=0.0001,betas=(0.9,0.999),eps=1e-20,weight_decay=0.001,amsgrad=True)
-optimizer = optim.SGD(net3_2.parameters(), lr=1e-6, weight_decay = 1e-6, momentum=0.9, nesterov=True)
+
+#stochastic gradient descent
+optimizer = optim.SGD(net.parameters(), lr=1e-2, weight_decay = 1e-4, momentum=0.9, nesterov=True)
+
+#scheduler to adjust learning rate
 scheduler = ReduceLROnPlateau(optimizer, mode= 'min', factor=0.1, patience=1)
 
+#number of epochs
 n_epochs = 30
 for epoch in range(n_epochs):
     
     running_loss=0
     
     for i, data in enumerate(train_loader, 0):
-        # get the inputs
+        # get the batch inputs
         inputs, labels = data
         inputs = inputs.to(device)
         labels = labels.to(device)
@@ -168,35 +180,37 @@ for epoch in range(n_epochs):
         # zero the parameter gradients
         optimizer.zero_grad()
 
-        # Fwd pass + backward
-        outputs = net3_2(inputs)
-        loss = criterion(outputs, labels)
+        # Forward pass
+        outputs = net(inputs)
         
-        #Bwd pass
+        #Backward pass
+        loss = criterion(outputs, labels)
         loss.backward()
         
-        #Optimizer
+        #Optimizer update
         optimizer.step()
         
+        #Batch loss
         running_loss += loss.item()
         
-        # print statistics every 125 mini-batches
-        # Why 125? -> enables to do 5 prints per epoch
-        if i == 516:
-            print('[%d, %5d] loss: %.3f' %(epoch + 1, i+1, running_loss/516))
+        # print statistics every epoch
+        if i == 500:
+            print('[%d, %5d] loss: %.3f' %(epoch + 1, i+1, running_loss/500))
             running_loss = 0
     
-    #Scheduler
+    #Scheduler update
     scheduler.step(running_loss)
                   
 print('Finished Training')
 
-net3_2.cpu()
-net3_2.eval()
+
+net.cpu()
+net.eval()
 
 import numpy as np
 from sklearn.metrics import roc_auc_score
 
+#Training accuracy and ACU
 total = 0
 auc_total = 0
 correct = 0
@@ -204,7 +218,7 @@ i = 0
 with torch.no_grad():
     for data in train_loader:
         images, labels = data
-        outputs = net3_2(images)
+        outputs = net(images)
         _, predicted = torch.max(outputs.data, 1)
         total += labels.size(0)
         correct += (predicted == labels).sum().item()
@@ -217,6 +231,7 @@ print('Accuracy of the network on the train images: %.2f %%' % (
 print('AUC of the network on the train images: %.2f %%' % (
     100 * auc_total / i))
 
+#Validation accuracy and ACU
 correct = 0
 total = 0
 auc_total = 0
@@ -224,7 +239,7 @@ i = 0
 with torch.no_grad():
     for data in val_loader:
         images, labels = data
-        outputs = net3_2(images)
+        outputs = net(images)
         _, predicted = torch.max(outputs.data, 1)
         total += labels.size(0)
         correct += (predicted == labels).sum().item()
@@ -236,6 +251,8 @@ print('Accuracy of the network on the validation images: %.2f %%' % (
 print('AUC of the network on the validation images: %.2f %%' % (
     100 * auc_total / i))
 
+
+#Test accuracy and ACU
 correct = 0
 total = 0
 auc_total = 0
@@ -243,7 +260,7 @@ i = 0
 with torch.no_grad():
     for data in test_loader:
         images, labels = data
-        outputs = net3_2(images)
+        outputs = net(images)
         _, predicted = torch.max(outputs.data, 1)
         total += labels.size(0)
         correct += (predicted == labels).sum().item()
@@ -255,12 +272,14 @@ print('Accuracy of the network on the test images: %.2f %%' % (
 print('AUC of the network on the test images: %.2f %%' % (
     100 * auc_total / i))
 
+
+#Validation confusion matrix
 nb_classes = 2
 
 confusion_matrix = torch.zeros(nb_classes, nb_classes)
 with torch.no_grad():
     for i, (inputs, classes) in enumerate(val_loader):
-        outputs = net3_2(inputs)
+        outputs = net(inputs)
         _, preds = torch.max(outputs, 1)
         for t, p in zip(classes.view(-1), preds.view(-1)):
                 confusion_matrix[t.long(), p.long()] += 1
